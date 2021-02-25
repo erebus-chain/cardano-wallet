@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -45,6 +46,7 @@ import Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobin
     , makeChangeForNonUserSpecifiedAsset
     , makeChangeForUserSpecifiedAsset
     , mapMaybe
+    , maxTokenQuantity
     , performSelection
     , prepareOutputsWith
     , runRoundRobin
@@ -52,6 +54,8 @@ import Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobin
     , runSelectionStep
     , ungroupByKey
     )
+import Cardano.Wallet.Primitive.Types.Address
+    ( Address (..) )
 import Cardano.Wallet.Primitive.Types.Coin
     ( Coin (..), addCoin )
 import Cardano.Wallet.Primitive.Types.Coin.Gen
@@ -263,6 +267,11 @@ spec = describe "Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobinSpec" $
             property prop_assetSelectionLens_givesPriorityToSingletonAssets
         it "prop_coinSelectonLens_givesPriorityToCoins" $
             property prop_coinSelectionLens_givesPriorityToCoins
+
+    parallel $ describe "Boundary tests" $ do
+
+        unitTests "testBoundaries"
+            unit_testBoundaries
 
     parallel $ describe "Making change" $ do
 
@@ -1072,6 +1081,148 @@ prop_coinSelectionLens_givesPriorityToCoins (Blind (Small u)) =
     initialState = SelectionState UTxOIndex.empty u
     lens = coinSelectionLens NoLimit Nothing minimumCoinQuantity
     minimumCoinQuantity = Coin 1
+
+--------------------------------------------------------------------------------
+-- Boundary tests
+--------------------------------------------------------------------------------
+
+unit_testBoundaries :: [Expectation]
+unit_testBoundaries = mkBoundaryTestExpectation <$> boundaryTestMatrix
+
+type BoundaryTestEntry = (Coin, [(AssetId, TokenQuantity)])
+
+data BoundaryTestData = BoundaryTestData
+    { boundaryTestOutputs
+        :: [BoundaryTestEntry]
+    , boundaryTestUtxo
+        :: [BoundaryTestEntry]
+    , boundaryTestExpectedInputs
+        :: [BoundaryTestEntry]
+    , boundaryTestExpectedChange
+        :: [BoundaryTestEntry]
+    }
+    deriving (Eq, Show)
+
+mkBoundaryTestExpectation :: BoundaryTestData -> Expectation
+mkBoundaryTestExpectation c = do
+    actualResult <- performSelection noMinCoin (mkCostFor NoCost) criteria
+    actualResult `shouldBe` Right expectedResult
+  where
+    criteria = mkBoundaryTestCriteria c
+    expectedResult = mkBoundaryTestResult c
+
+mkBoundaryTestCriteria :: BoundaryTestData -> SelectionCriteria
+mkBoundaryTestCriteria c = SelectionCriteria
+    { outputsToCover =
+        undefined
+    , utxoAvailable =
+        undefined
+    , selectionLimit =
+        NoLimit
+    , extraCoinSource =
+        Nothing
+    }
+
+mkBoundaryTestResult :: BoundaryTestData -> SelectionResult TokenBundle
+mkBoundaryTestResult = undefined
+
+boundaryTestMatrix :: [BoundaryTestData]
+boundaryTestMatrix =
+    [ boundaryTest1
+    , boundaryTest2
+    , boundaryTest3
+    , boundaryTest4
+    ]
+
+boundaryTest1 :: BoundaryTestData
+boundaryTest1 = BoundaryTestData
+    { boundaryTestOutputs =
+        [ (Coin 1_500_000, []) ]
+    , boundaryTestUtxo =
+        [ (Coin 1_000_000, [(assetA, TokenQuantity.pred maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, TokenQuantity 1)])
+        ]
+    , boundaryTestExpectedInputs =
+        [ (Coin 1_000_000, [(assetA, TokenQuantity.pred maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, TokenQuantity 1)])
+        ]
+    , boundaryTestExpectedChange =
+        [ (Coin 500_000, [(assetA, maxTokenQuantity)]) ]
+    }
+  where
+    assetA :: AssetId
+    assetA = AssetId (UnsafeTokenPolicyId $ Hash "A") (UnsafeTokenName "1")
+
+boundaryTest2 :: BoundaryTestData
+boundaryTest2 = BoundaryTestData
+    { boundaryTestOutputs =
+        [ (Coin 1_500_000, []) ]
+    , boundaryTestUtxo =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity `divTokenQuantity` 2)])
+        , (Coin 1_000_000, [(assetA, maxTokenQuantity `divTokenQuantity` 2)])
+        ]
+    , boundaryTestExpectedInputs =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity `divTokenQuantity` 2)])
+        , (Coin 1_000_000, [(assetA, maxTokenQuantity `divTokenQuantity` 2)])
+        ]
+    , boundaryTestExpectedChange =
+        [ (Coin 500_000, [(assetA, maxTokenQuantity)]) ]
+    }
+  where
+    assetA :: AssetId
+    assetA = AssetId (UnsafeTokenPolicyId $ Hash "A") (UnsafeTokenName "1")
+
+boundaryTest3 :: BoundaryTestData
+boundaryTest3 = BoundaryTestData
+    { boundaryTestOutputs =
+        [ (Coin 1_500_000, []) ]
+    , boundaryTestUtxo =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, TokenQuantity 1)])
+        ]
+    , boundaryTestExpectedInputs =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, TokenQuantity 1)])
+        ]
+    , boundaryTestExpectedChange =
+        [ (Coin 250_000,
+            [ ( assetA
+              , maxTokenQuantity `divTokenQuantity` 2
+              )
+            ]
+          )
+        , (Coin 250_000,
+            [ ( assetA
+              , maxTokenQuantity `divTokenQuantity` 2 <> TokenQuantity 1
+              )
+            ]
+          )
+        ]
+    }
+  where
+    assetA :: AssetId
+    assetA = AssetId (UnsafeTokenPolicyId $ Hash "A") (UnsafeTokenName "1")
+
+boundaryTest4 :: BoundaryTestData
+boundaryTest4 = BoundaryTestData
+    { boundaryTestOutputs =
+        [ (Coin 1_500_000, []) ]
+    , boundaryTestUtxo =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        ]
+    , boundaryTestExpectedInputs =
+        [ (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        , (Coin 1_000_000, [(assetA, maxTokenQuantity)])
+        ]
+    , boundaryTestExpectedChange =
+        [ (Coin 250_000, [(assetA, maxTokenQuantity)])
+        , (Coin 250_000, [(assetA, maxTokenQuantity)])
+        ]
+    }
+  where
+    assetA :: AssetId
+    assetA = AssetId (UnsafeTokenPolicyId $ Hash "A") (UnsafeTokenName "1")
 
 --------------------------------------------------------------------------------
 -- Making change
@@ -2041,6 +2192,9 @@ consecutivePairs :: [a] -> [(a, a)]
 consecutivePairs xs = case tailMay xs of
     Nothing -> []
     Just ys -> xs `zip` ys
+
+divTokenQuantity :: TokenQuantity -> Natural -> TokenQuantity
+divTokenQuantity (TokenQuantity q) n = TokenQuantity $ q `div` n
 
 inAscendingPartialOrder :: (Foldable f, PartialOrd a) => f a -> Bool
 inAscendingPartialOrder = all (uncurry leq) . consecutivePairs . F.toList

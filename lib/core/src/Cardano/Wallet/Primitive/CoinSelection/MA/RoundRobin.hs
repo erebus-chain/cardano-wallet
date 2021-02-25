@@ -71,6 +71,9 @@ module Cardano.Wallet.Primitive.CoinSelection.MA.RoundRobin
     -- * Accessors
     , fullBalance
 
+    -- * Constants
+    , maxTokenQuantity
+
     -- * Utility classes
     , AssetCount (..)
 
